@@ -19,7 +19,7 @@ if ! [ -z "$output" ]; then
 	llv3=$(echo "scale=0;$llv3 / 1" |bc)
 	llkwh=$(echo $output | jq '.list[] | .meterReading')
 	evsewifiplugstatelp1=$(echo $output | jq '.list[] | .vehicleState')
-	rfidtag=$(echo $output | jq '.list[] | .RFIDUID') 
+	rfidtag=$(echo $output | jq -r '.list[] | .RFIDUID') 
 	llakt=$(echo $output | jq '.list[] | .actualCurrent')
 	
 	watt=$(echo "scale=0;$watt * 1000 /1" |bc)
@@ -58,7 +58,7 @@ if ! [ -z "$output" ]; then
 	else
 		echo 0 > /var/www/html/openWB/ramdisk/chargestat
 	fi
-	if [[ $rfidtag != "0" ]] ; then
+	if [ ${#rfidtag} -ge 3 ];then
 		echo $rfidtag > /var/www/html/openWB/ramdisk/readtag
 		curl --connect-timeout $evsewifitimeoutlp1 -s http://$evsewifiiplp1/clearRfid
 	fi

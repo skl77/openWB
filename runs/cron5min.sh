@@ -5,9 +5,24 @@ RAMDISKDIR="$OPENWBBASEDIR/ramdisk"
 . $OPENWBBASEDIR/loadconfig.sh
 . $OPENWBBASEDIR/helperFunctions.sh
 
+if [ -e $OPENWBBASEDIR/ramdisk/updateinprogress ] && [ -e $OPENWBBASEDIR/ramdisk/bootinprogress ]; then
+	updateinprogress=$(<$OPENWBBASEDIR/ramdisk/updateinprogress)
+	bootinprogress=$(<$OPENWBBASEDIR/ramdisk/bootinprogress)
+	if (( updateinprogress == "1" )); then
+		openwbDebugLog "MAIN" 0 "##### cron5min.sh Update in progress"
+		exit 0
+	elif (( bootinprogress == "1" )); then
+		openwbDebugLog "MAIN" 0 "##### cron5min.sh Boot in progress"
+		exit 0
+	fi
+else
+	openwbDebugLog "MAIN" 0 "##### cron5min.sh Ramdisk not set up. Maybe we are still booting."
+	exit 0
+fi
+
 openwbDebugLog "MAIN" 0 "##### cron5min.sh started #####"
 
-dailyfile="$OPENWBBASEDIR/web/logging/data/daily/$(date +%Y%m%d)"
+dailyfile="$OPENWBBASEDIR/web/logging/data/daily/$(date +%Y%m%d).csv"
 monthlyladelogfile="$OPENWBBASEDIR/web/logging/data/ladelog/$(date +%Y%m).csv"
 
 # check if a monthly logfile exists and create a new one if not
@@ -83,8 +98,8 @@ d8haus=$(<$RAMDISKDIR/smarthome_device_minhaus_8)
 d9haus=$(<$RAMDISKDIR/smarthome_device_minhaus_9)
 
 # now add a line to our daily csv
-echo $(date +%H%M),$bezug,$einspeisung,$pv,$ll1,$ll2,$ll3,$llg,$speicheri,$speichere,$verbraucher1,$verbrauchere1,$verbraucher2,$verbrauchere2,$verbraucher3,$ll4,$ll5,$ll6,$ll7,$ll8,$speichersoc,$soc,$soc1,$temp1,$temp2,$temp3,$d1,$d2,$d3,$d4,$d5,$d6,$d7,$d8,$d9,$d10,$temp4,$temp5,$temp6 >> $dailyfile.csv
-openwbDebugLog "MAIN" 1 "daily csv updated: $dailyfile.csv"
+echo $(date +%H%M),$bezug,$einspeisung,$pv,$ll1,$ll2,$ll3,$llg,$speicheri,$speichere,$verbraucher1,$verbrauchere1,$verbraucher2,$verbrauchere2,$verbraucher3,$ll4,$ll5,$ll6,$ll7,$ll8,$speichersoc,$soc,$soc1,$temp1,$temp2,$temp3,$d1,$d2,$d3,$d4,$d5,$d6,$d7,$d8,$d9,$d10,$temp4,$temp5,$temp6 >> $dailyfile
+openwbDebugLog "MAIN" 1 "daily csv updated: $dailyfile"
 
 # grid protection
 # temporary disabled
@@ -288,6 +303,16 @@ else
 	python3 $OPENWBBASEDIR/runs/mqttsub.py &
 fi
 
+# check if our legacy run server is running
+pgrep -f "$OPENWBBASEDIR/packages/legacy_run_server.py" > /dev/null
+if [ $? == 1 ]
+then
+	openwbDebugLog "MAIN" 0 "legacy_run_server is not running. Restarting process"
+	bash "$OPENWBBASEDIR/packages/legacy_run_server.sh"
+else
+	openwbDebugLog "MAIN" 1 "legacy_run_server is already running"
+fi
+
 # check if our smarthome handler is running
 if ps ax |grep -v grep |grep "python3 $OPENWBBASEDIR/runs/smarthomehandler.py" > /dev/null
 then
@@ -384,6 +409,11 @@ if (( $pingcheckactive == 1 )); then
 	openwbDebugLog "MAIN" 1 "pingcheck configured; starting"
 	$OPENWBBASEDIR/runs/pingcheck.sh &
 fi
+
+# record the current commit details
+commitId=`git -C /var/www/html/openWB log --format="%h" -n 1`
+echo "$commitId" > $RAMDISKDIR/currentCommitHash
+echo `git -C /var/www/html/openWB branch -a --contains $commitId | perl -nle 'm|.*origin/(.+).*|; print $1' | uniq | xargs` > $RAMDISKDIR/currentCommitBranches
 
 # EVSE Check
 openwbDebugLog "MAIN" 1 "starting evsecheck"
