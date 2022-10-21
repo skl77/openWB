@@ -2,64 +2,48 @@ import logging
 from typing import List
 
 from helpermodules.cli import run_using_positional_cli_args
-from modules.common.abstract_device import AbstractDevice
-from modules.common.component_context import SingleComponentUpdateContext
+from modules.common.abstract_device import DeviceDescriptor
+from modules.common.configurable_device import ConfigurableDevice, ComponentFactoryByType, IndependentComponentUpdater
 from modules.common.req import get_http_session
 from modules.discovergy import counter, inverter
-from modules.discovergy.utils import DiscovergyComponent
+from modules.discovergy.config import (
+    Discovergy,
+    DiscovergyConfiguration,
+    DiscovergyCounterConfiguration,
+    DiscovergyCounterSetup,
+    DiscovergyInverterConfiguration,
+    DiscovergyInverterSetup)
+
+log = logging.getLogger(__name__)
 
 
-def get_default_config(id: int = 0, **configuration) -> dict:
-    return {
-        "name": "Discovergy",
-        "type": "discovergy",
-        "id": id,
-        "configuration": configuration
-    }
-
-
-component_registry = {
-    "counter": counter.create_component,
-    "inverter": inverter.create_component
-}
-
-log = logging.getLogger("Discovergy")
-
-
-class Device(AbstractDevice):
-    def __init__(self, device_config: dict) -> None:
-        settings = device_config["configuration"]
-        self.__session = get_http_session()
-        self.__session.auth = (settings["user"], settings["password"])
-        self.__components = []  # type: List[DiscovergyComponent]
-
-    def add_component(self, component_config: dict) -> None:
-        try:
-            factory = component_registry[component_config["type"]]
-        except KeyError as e:
-            raise Exception(
-                "Unknown component type <%s>, known types are: <%s>", e, ','.join(component_registry.keys())
-            )
-        self.__components.append(factory(component_config))
-
-    def update(self) -> None:
-        for component in self.__components:
-            with SingleComponentUpdateContext(component.component_info):
-                component.update(self.__session)
+def create_device(device_config: DiscovergyConfiguration):
+    session = get_http_session()
+    session.auth = (device_config.user, device_config.password)
+    return ConfigurableDevice(
+        device_config=device_config,
+        component_factory=ComponentFactoryByType(counter=counter.create_component, inverter=inverter.create_component),
+        component_updater=IndependentComponentUpdater(lambda component: component.update(session)),
+    )
 
 
 def read_legacy(user: str, password: str, meter_id_counter: str, meter_id_inverter: str):
     log.debug("Beginning update")
-    device = Device(get_default_config(user=user, password=password))
-
+    device = create_device(DiscovergyConfiguration(user=user, password=password))
     if meter_id_counter:
-        device.add_component(counter.get_default_config(meter_id=meter_id_counter))
+        device.add_component(DiscovergyCounterSetup(
+            id=None, configuration=DiscovergyCounterConfiguration(meter_id=meter_id_counter)
+        ))
     if meter_id_inverter:
-        device.add_component(inverter.get_default_config(1, meter_id=meter_id_inverter))
-
+        device.add_component(DiscovergyInverterSetup(
+            id=1, configuration=DiscovergyInverterConfiguration(meter_id=meter_id_inverter)
+        ))
     device.update()
     log.debug("Update completed")
 
 
 def main(argv: List[str]):
     run_using_positional_cli_args(read_legacy, argv)
+
+
+device_descriptor = DeviceDescriptor(configuration_factory=Discovergy)

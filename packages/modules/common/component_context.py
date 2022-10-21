@@ -1,26 +1,31 @@
+import logging
 import threading
 from typing import Optional, List, Union, Any, Dict
 
 from modules.common.fault_state import ComponentInfo, FaultState
 
+log = logging.getLogger("soc."+__name__)
+
 
 class SingleComponentUpdateContext:
     """ Wenn die Werte der Komponenten nicht miteinander verrechnet werden, sollen, auch wenn bei einer Komponente ein
-    Fehler auftritt, alle anderen dennnoch ausgelesen werden. WR-Werte dienen nur statistischen Zwecken, ohne
+    Fehler auftritt, alle anderen dennoch ausgelesen werden. WR-Werte dienen nur statistischen Zwecken, ohne
     EVU-Werte ist aber keine Regelung möglich. Ein nicht antwortender WR soll dann nicht die Regelung verhindern.
-        for component in self._components:
+        for component in self.components:
             with SingleComponentUpdateContext(component):
                 component.update()
     """
 
-    def __init__(self, component_info: ComponentInfo):
+    def __init__(self, component_info: ComponentInfo, update_always: bool = True):
         self.__component_info = component_info
+        self.update_always = update_always
 
     def __enter__(self):
+        log.debug("Update Komponente ['"+self.__component_info.name+"']")
         return None
 
     def __exit__(self, exception_type, exception, exception_traceback) -> bool:
-        MultiComponentUpdateContext.override_subcomponent_state(self.__component_info, exception)
+        MultiComponentUpdateContext.override_subcomponent_state(self.__component_info, exception, self.update_always)
         return True
 
 
@@ -28,8 +33,8 @@ class MultiComponentUpdateContext:
     """ Wenn die Werte der Komponenten miteinander verrechnet werden, muss, wenn bei einer Komponente ein Fehler
     auftritt, für alle Komponenten der Fehlerzustand gesetzt werden, da aufgrund der Abhängigkeiten für alle Module
     keine Werte ermittelt werden können.
-        with MultiComponentUpdateContext(self._components):
-            for component in self._components:
+        with MultiComponentUpdateContext(self.components):
+            for component in self.components:
                 component.update()
     """
     __thread_local = threading.local()
@@ -43,6 +48,8 @@ class MultiComponentUpdateContext:
         if hasattr(self.__thread_local, "active_context"):
             raise Exception("Nesting MultiComponentUpdateContext is not supported")
         MultiComponentUpdateContext.__thread_local.active_context = self
+        log.debug("Update Komponenten " +
+                  str([component.component_info.name for component in self.__device_components]))
         return None
 
     def __exit__(self, exception_type, exception, exception_traceback) -> bool:
@@ -58,7 +65,7 @@ class MultiComponentUpdateContext:
         self.__ignored_components.append(component)
 
     @staticmethod
-    def override_subcomponent_state(component_info: ComponentInfo, exception):
+    def override_subcomponent_state(component_info: ComponentInfo, exception, update_always: bool):
         active_context = getattr(
             MultiComponentUpdateContext.__thread_local, "active_context", None
         )  # type: Optional[MultiComponentUpdateContext]
@@ -67,5 +74,37 @@ class MultiComponentUpdateContext:
             # the value for the individual component
             active_context.ignore_subcomponent_state(component_info)
 
-        fault_state = FaultState.from_exception(exception)
+        if exception:
+            fault_state = FaultState.from_exception(exception)
+        else:
+            # Fehlerstatus nicht überschreiben
+            if update_always:
+                fault_state = FaultState.no_error()
+            else:
+                return
         fault_state.store_error(component_info)
+
+
+class ErrorCounterContext:
+    def __init__(self, exceeded_msg: str):
+        self.__error_counter = 0
+        self.__exceeded_msg = exceeded_msg
+
+    def __enter__(self):
+        return None
+
+    def __exit__(self, exception_type, exception, exception_traceback) -> bool:
+        if exception:
+            self.__error_counter += 1
+            raise exception
+        return True
+
+    def error_counter_exceeded(self) -> bool:
+        if self.__error_counter > 5:
+            log.error(self.__exceeded_msg)
+            return True
+        else:
+            return False
+
+    def reset_error_counter(self):
+        self.__error_counter = 0

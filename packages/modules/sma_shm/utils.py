@@ -1,12 +1,13 @@
 import logging
-from typing import TypeVar, Generic, Callable, Optional
+from typing import TypeVar, Generic, Callable, Optional, Union
 
 from modules.common.component_context import SingleComponentUpdateContext
 from modules.common.fault_state import ComponentInfo
 from modules.common.store import ValueStore
+from modules.sma_shm.config import SmaHomeManagerCounterSetup, SmaHomeManagerInverterSetup
 
 T = TypeVar("T")
-log = logging.getLogger("SMA Speedwire")
+log = logging.getLogger(__name__)
 
 
 def _create_serial_matcher(serial: Optional[int]) -> Callable[[dict], bool]:
@@ -21,10 +22,10 @@ class SpeedwireComponent(Generic[T]):
     def __init__(self,
                  value_store_factory: Callable[[int], ValueStore[T]],
                  parser: Callable[[dict], T],
-                 component_config: dict):
-        self.__value_store = value_store_factory(component_config["id"])
+                 component_config: Union[SmaHomeManagerCounterSetup, SmaHomeManagerInverterSetup]):
+        self.__value_store = value_store_factory(component_config.id)
         self.__parser = parser
-        self.__serial_matcher = _create_serial_matcher(component_config["configuration"]["serials"])
+        self.__serial_matcher = _create_serial_matcher(component_config.configuration.serials)
         self.component_info = ComponentInfo.from_component_config(component_config)
 
     def read_datagram(self, datagram: dict) -> bool:
